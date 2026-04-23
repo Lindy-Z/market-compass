@@ -22,14 +22,14 @@ Status legend / 状态图例: `todo` | `in-progress` | `done` | `blocked`
 | 1.4 | Pre-commit secret scanner hook | Pre-commit 密钥扫描 | `done` | `scripts/install-hooks.sh` — custom, no external binary. |
 | 1.5 | Memory system: DECISIONS / WORKFLOW / CHANGELOG / ARCHITECTURE / PROMPTS / SESSION_LOG | 记忆系统 | `done` | Seeded with Phase-1 content. |
 | 1.6 | Update-management protocol (branching, commits, PRs) | 更新管理流程 | `done` | Documented below. |
-| 1.7 | First commits + branch `main` + tag v0.1.0 | 首次提交与打标签 | `blocked` | Deferred to Lindy's Mac via `scripts/bootstrap.sh` (sandbox FS blocks unlink, stuck .git/index.lock). See ADR-0009 and SESSION_LOG 2026-04-23. |
-| 1.8 | Create GitHub remote (public) | 创建 GitHub 远端 (公开) | `blocked` | Blocked on 1.7. After bootstrap runs, Lindy runs `gh repo create market-compass --public --source=. --remote=origin --push` then `git push --tags`. |
+| 1.7 | First commits + branch `main` + tag v0.1.0 | 首次提交与打标签 | `done` | Ran via `scripts/bootstrap.sh` on Lindy's Mac (2026-04-23). Four Conventional Commits + v0.1.0 tag. See ADR-0009. |
+| 1.8 | Create GitHub remote (public) | 创建 GitHub 远端 (公开) | `done` | https://github.com/Lindy-Z/market-compass — manual create (no `gh` installed) + `git remote add origin` + `git push -u origin main` + `git push --tags`. |
 
 ### Phase 2 — Data plane / 第二阶段 — 数据层
 
 | # | Task | 任务 | Status | Notes |
 |---|------|------|--------|-------|
-| 2.1 | SQLite schema (items, runs, deliveries, triggers) | SQLite schema | `todo` | Design in ARCHITECTURE; review before impl. |
+| 2.1 | SQLite schema (items, runs, deliveries, triggers) | SQLite schema | `done` | `src/storage/{schema.sql, db.py}` + 17 passing tests in `tests/test_storage.py`. WAL journal, FK cascade/SET NULL, CHECK constraints, user_version=1. |
 | 2.2 | Content-hash dedup utility | 基于内容哈希的去重 | `todo` | SHA-256 over `title + body[:2048] + source + date`. |
 | 2.3 | Ingestion: RSS (Reuters, Bloomberg, WSJ, FT, NYT biz, Nikkei, Caixin) | RSS 抓取 | `todo` | Respect robots/ToS; cache ETags. |
 | 2.4 | Ingestion: Finnhub free tier (market news + deals) | Finnhub 抓取 | `todo` | 60 req/min cap. |

@@ -10,10 +10,19 @@ version numbers follow [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added / 新增
-- _nothing yet / 暂无_
+- ADR-0010 — LLM tier selection: `claude-haiku-4-5-20251001` (cheap) + `claude-opus-4-7` (strong). Projected ≈ $6/month.
+  ADR-0010 LLM 模型档选择决定,预计月花费约 6 美元。
+- Phase 2 `2.1` — SQLite storage layer:
+  - `src/storage/schema.sql` — `items`, `runs`, `deliveries`, `triggers` tables with indexes, CHECK constraints, FK cascade / SET NULL.
+  - `src/storage/db.py` — `get_connection()` context manager (commits on clean exit, rolls back on exception, enables WAL + foreign keys), idempotent `init_db()`, `schema_version()` helper, version-refusal safeguard.
+  - `conftest.py` — makes `src/` packages importable in tests without `pip install -e .`.
+  - `requirements-dev.txt` — `pytest>=8.0`.
+  - `tests/test_storage.py` — 17 tests covering schema creation, idempotency, CHECK constraints, UNIQUE on `content_hash`, FK cascade (runs→deliveries, items→triggers), FK SET NULL (runs→triggers.run_id), rollback and commit semantics of the context manager. All passing.
+  Phase 2 `2.1` SQLite 存储层完成,17 个测试全部通过。
 
 ### Changed / 变更
-- _nothing yet / 暂无_
+- `.env.example`: `LLM_STRONG_MODEL` switched from `claude-sonnet-4-6` to `claude-opus-4-7`; comments reference ADR-0010.
+  `.env.example` 强模型默认值切换,注释指向 ADR-0010。
 
 ### Fixed / 修复
 - _nothing yet / 暂无_
