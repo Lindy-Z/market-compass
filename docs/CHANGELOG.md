@@ -12,6 +12,11 @@ version numbers follow [Semantic Versioning](https://semver.org/).
 ### Added / 新增
 - ADR-0010 — LLM tier selection: `claude-haiku-4-5-20251001` (cheap) + `claude-opus-4-7` (strong). Projected ≈ $6/month.
   ADR-0010 LLM 模型档选择决定,预计月花费约 6 美元。
+- Phase 2 `2.2` — content-hash deduplication:
+  - `src/processing/dedup.py` — `content_hash(title, body, source, pub_ts) -> str` (SHA-256 hex, 64 chars, NFC + whitespace normalized, body truncated to 2048 codepoints), `is_duplicate(conn, h) -> bool`, `filter_new(conn, items)` streaming generator that drops DB-archived AND intra-batch duplicates and augments each yielded item with `content_hash`.
+  - `tests/test_dedup.py` — 25 tests: determinism, per-field sensitivity, whitespace normalization, NFC unification of composed/decomposed Unicode, None-body handling, codepoint-level body truncation, empty-input rejection, cross-source separation, input-mutation safety, generator streaming, DB lookup. All passing.
+  - `src/processing/__init__.py` — exports the dedup API.
+  Phase 2 `2.2` 去重模块完成,25 个测试通过。设计决定 (ADR 本轮未新增): `source` 参与哈希, 跨源同事件两条都保留。
 - Phase 2 `2.1` — SQLite storage layer:
   - `src/storage/schema.sql` — `items`, `runs`, `deliveries`, `triggers` tables with indexes, CHECK constraints, FK cascade / SET NULL.
   - `src/storage/db.py` — `get_connection()` context manager (commits on clean exit, rolls back on exception, enables WAL + foreign keys), idempotent `init_db()`, `schema_version()` helper, version-refusal safeguard.

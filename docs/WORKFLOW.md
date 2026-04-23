@@ -30,7 +30,7 @@ Status legend / 状态图例: `todo` | `in-progress` | `done` | `blocked`
 | # | Task | 任务 | Status | Notes |
 |---|------|------|--------|-------|
 | 2.1 | SQLite schema (items, runs, deliveries, triggers) | SQLite schema | `done` | `src/storage/{schema.sql, db.py}` + 17 passing tests in `tests/test_storage.py`. WAL journal, FK cascade/SET NULL, CHECK constraints, user_version=1. |
-| 2.2 | Content-hash dedup utility | 基于内容哈希的去重 | `todo` | SHA-256 over `title + body[:2048] + source + date`. |
+| 2.2 | Content-hash dedup utility | 基于内容哈希的去重 | `done` | `src/processing/dedup.py` + 25 tests. `content_hash()` / `is_duplicate()` / `filter_new()`. NFC + whitespace normalization; source is part of hash (cross-source items kept separate by design). |
 | 2.3 | Ingestion: RSS (Reuters, Bloomberg, WSJ, FT, NYT biz, Nikkei, Caixin) | RSS 抓取 | `todo` | Respect robots/ToS; cache ETags. |
 | 2.4 | Ingestion: Finnhub free tier (market news + deals) | Finnhub 抓取 | `todo` | 60 req/min cap. |
 | 2.5 | Ingestion: FRED API (select macro series) | FRED 抓取 | `todo` | Daily series only. |
