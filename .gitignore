@@ -1,0 +1,163 @@
+# ============================================================================
+# market-compass — .gitignore
+# SECURITY-FIRST / 安全优先:
+#   We aggressively exclude anything that could leak secrets, personal data,
+#   or cached artifacts. If you're ever unsure whether a file is safe to
+#   commit, ASSUME IT IS NOT and add it here first. Then ask.
+#   凡是不确定能否提交的文件,一律先加入此处, 再问。
+# ============================================================================
+
+# ----- Secrets / 密钥与凭据 -----
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+*.pfx
+credentials.json
+credentials*.yaml
+credentials*.yml
+secrets/
+secret/
+*.secret
+*_secret.*
+.telegram_token
+.anthropic_key
+.openai_key
+token.json
+oauth.json
+service_account*.json
+
+# ----- Data & archives / 数据与归档 -----
+# Never commit raw news, processed artifacts, or the local SQLite DB.
+# 永远不提交原始新闻、处理后的产物或本地 SQLite 库。
+data/
+archive/
+archives/
+cache/
+.cache/
+raw/
+processed/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+*.parquet
+*.feather
+*.pkl
+*.pickle
+
+# ----- Logs / 日志 -----
+logs/
+*.log
+*.log.*
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ----- Python -----
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments / 虚拟环境
+.venv/
+venv/
+env/
+ENV/
+.virtualenv/
+
+# Testing / 测试
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+.hypothesis/
+
+# Type checkers / 静态类型
+.mypy_cache/
+.pyre/
+.pytype/
+.ruff_cache/
+
+# Jupyter / 笔记本
+.ipynb_checkpoints/
+*.ipynb
+
+# ----- OS / 操作系统产物 -----
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# ----- IDE / 编辑器 -----
+.idea/
+.vscode/
+*.swp
+*.swo
+*.swn
+*~
+.project
+.pydevproject
+.settings/
+*.sublime-project
+*.sublime-workspace
+
+# ----- Node (in case of tooling) -----
+node_modules/
+package-lock.json.bak
+
+# ----- Terraform / infra state (future-proofing) -----
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraformrc
+terraform.rc
+
+# ----- Local scratch / 本地草稿 -----
+scratch/
+tmp/
+temp/
+.tmp/
+*.tmp
+*.bak
+*.orig
+TODO.local.md
+NOTES.local.md
+
+# Hook self-test + sandbox permission-probe artifacts
+# Hook 自测与沙箱权限探测产物
+.hook_selftest.tmp
+.gitignore.tmp_test
+*.tmp_test
