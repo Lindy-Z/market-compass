@@ -111,10 +111,12 @@ if [[ -n "${added_lines}" ]]; then
 
   # Heuristic: label=...value pairs that look like secrets, not placeholders.
   # Catches things like `PASSWORD=actual_value_here_with_length`
-  # but explicitly excludes `your_..._here`, `xxx`, `changeme`, empty, etc.
+  # but explicitly excludes obvious test / placeholder markers.
+  # The exclusion grep is case-insensitive (-i) so 'placeholder' matches
+  # 'PLACEHOLDER' and vice-versa.
   hits="$(echo "${added_lines}" \
     | grep -E -i '^\+[^#]*\b(password|secret|token|api[_-]?key)\s*[:=]\s*[^[:space:]]{20,}' \
-    | grep -Ev 'your_[a-z_]+_here|x{5,}|changeme|REPLACE_ME|example|\.\.\.|PLACEHOLDER' || true)"
+    | grep -Ev -i 'your_[a-z_]+_here|x{5,}|changeme|replace[_-]?me|example|\.\.\.|placeholder|dry[-_]run|not[-_]real|fake|dummy|test[_-](key|token|value|placeholder|fixture|api)' || true)"
   if [[ -n "${hits}" ]]; then
     echo "${RED}✗ Blocked: high-entropy secret-like assignment${NC}"
     echo "${hits}" | head -n 5 | sed 's/^/    /'

@@ -31,10 +31,10 @@ Status legend / 状态图例: `todo` | `in-progress` | `done` | `blocked`
 |---|------|------|--------|-------|
 | 2.1 | SQLite schema (items, runs, deliveries, triggers) | SQLite schema | `done` | `src/storage/{schema.sql, db.py}` + 17 passing tests in `tests/test_storage.py`. WAL journal, FK cascade/SET NULL, CHECK constraints, user_version=1. |
 | 2.2 | Content-hash dedup utility | 基于内容哈希的去重 | `done` | `src/processing/dedup.py` + 25 tests. `content_hash()` / `is_duplicate()` / `filter_new()`. NFC + whitespace normalization; source is part of hash (cross-source items kept separate by design). |
-| 2.3 | Ingestion: RSS (Reuters, Bloomberg, WSJ, FT, NYT biz, Nikkei, Caixin) | RSS 抓取 | `todo` | Respect robots/ToS; cache ETags. |
-| 2.4 | Ingestion: Finnhub free tier (market news + deals) | Finnhub 抓取 | `todo` | 60 req/min cap. |
-| 2.5 | Ingestion: FRED API (select macro series) | FRED 抓取 | `todo` | Daily series only. |
-| 2.6 | Ingestion: SEC EDGAR (8-K / 13D / 425 filings) | SEC EDGAR 抓取 | `todo` | User-Agent header required. |
+| 2.3 | Ingestion: RSS (curated free-stack, see ADR-0012) | RSS 抓取 | `done` | `src/ingestion/{feed_config.py, rss.py}` + 16 tests. ETag conditional GET, per-feed graceful degradation, schema-v2 `feed_state` cache. **Smoke-tested 2026-04-23: 9 feeds verified live** (Fed, ECB, BoE, BoJ, Economist × 4 sections, Nikkei Asia). 4 candidates (US Treasury, BIS, IMF, Caixin Global) moved to "Known broken" block in `feed_config.py` with actual error + research notes. Reactivation needs correct URLs. |
+| 2.4 | Ingestion: Finnhub free tier (market news + deals) | Finnhub 抓取 | `done` | `src/ingestion/finnhub.py` + 23 tests. Three categories (`general` / `forex` / `merger`). Auth via `X-Finnhub-Token` header (verified-not-in-URL by test). Per-category throttle via `feed_state.last_fetched_ts` + new `STATUS_THROTTLED` sentinel. Same `FetchOutcome` shape and dedup-compatible item dicts as RSS. |
+| 2.5 | Ingestion: FRED API (select macro series) | FRED 抓取 | `done` | `src/ingestion/fred.py` + 27 tests. Schema **v3** adds `observations` table (PK series_id+obs_date, INSERT-OR-REPLACE on FRED revisions). 15 curated series (UST yield curve 3M-30Y, USD/EUR/JPY/CNY, DXY-broad index, SPX, VIX, gold London PM, CPI, UNRATE, DFF). Numerical data goes to `observations` not `items`. `get_latest_observation()` for the reasoning layer. |
+| 2.6 | Ingestion: SEC EDGAR (8-K / SC 13D / 425 / DEFM14A) | SEC EDGAR 抓取 | `done` | `src/ingestion/edgar.py` + 10 tests. Wraps `rss.fetch_one` with mandatory `SEC_EDGAR_USER_AGENT` (refuses without it). 4 form-type Atom feeds. |
 | 2.7 | Ingestion: GDELT event stream (geopolitical flags) | GDELT 抓取 | `todo` | Filter by event code + tone. |
 | 2.8 | Classifier: track router (macro / NA+FX / deals) | 分类器: 信息轨路由 | `todo` | Cheap-LLM prompt; fallback to rules. |
 | 2.9 | Delivery: Telegram bot sender | Telegram 推送 | `todo` | Markdown V2; escape rules. |
@@ -43,15 +43,18 @@ Status legend / 状态图例: `todo` | `in-progress` | `done` | `blocked`
 | 2.12 | GitHub Actions cron: daily 07:00 local | GitHub Actions 每日定时 | `todo` | UTC offset handled in job script. |
 | 2.13 | Dry-run mode + local smoke test | Dry-run 与本地冒烟测试 | `todo` | `DRY_RUN=true` env var. |
 
-### Phase 3+ / 第三阶段及以后
+### Phase 3 — Reasoning engine / 第三阶段 — 推理引擎
 
-Planned collaboratively at Phase 2 close. Headline items:
-
-- Reasoning engine + causal-chain template.
-- Saturday weekly synthesis (cross-track, richer model).
-- Event-triggered deep analysis (deal size, central-bank surprises,
-  market > 2% moves).
-- Evaluation harness (gold-label briefs, regression tests on prompts).
+| # | Task | 任务 | Status | Notes |
+|---|------|------|--------|-------|
+| 3.0 | Prompt templates (PROMPTS.md + prompts.py + sync test) | Prompt 模板 | `done` | 6 versioned prompts (`classify.triage`, `summarize.bilingual`, `causal_chain.five_step`, `synthesize.weekly`, `trigger.deep_analysis`, `meta.feed_prompt`); `PromptTemplate` dataclass with `format_user()` validator; 22 tests incl. doc↔code sync. |
+| 3.1 | LLM client (Anthropic SDK wrapper, model routing, cost meter) | LLM 客户端 | `done` | `src/reasoning/llm_client.py` + 43 tests. `LLMClient.call(prompt, tier_override=None, **kwargs)` routes per `model_tier`; CostMeter tracks soft ($15) / hard ($20) caps with `BudgetExceededError` on hard breach BEFORE the call. Robust JSON extraction (raw / fenced / embedded). MODEL_PRICES table for Haiku 4.5 / Sonnet 4.6 / Opus 4.7. `enable_caching=True` adds `cache_control: ephemeral` (forward-compat — current prompts under min cache size). FakeAnthropicClient pattern for tests; `anthropic` SDK only required at runtime. |
+| 3.2 | Classifier+triage runner (uses `classify.triage`) | 分类与分流 | `done` | `src/processing/triage.py` + 24 tests + `scripts/run_triage.py` CLI. `triage_one()` validates LLM output (track in enum, importance 0-100); `apply_triage()` merges `deal_size` / `reason` / `track_confidence` into `items.meta` JSON without overwriting ingestion-set keys; `run_pending_triage()` selects oldest-first, supports `--limit` and `--dry-run`, isolates per-item failures, propagates `BudgetExceededError`. |
+| 3.3 | Summary runner (uses `summarize.bilingual`) | 双语摘要 | `todo` | Populates `summary_en` / `summary_zh` / `key_numbers`. |
+| 3.4 | Causal-chain generator (uses `causal_chain.five_step`) | 因果链生成 | `todo` | Strong-tier when importance≥70; populates `causal_chain` JSON. |
+| 3.5 | Trigger detector (deal_size / cb_surprise / geo / market_move) | 触发器 | `todo` | Writes to `triggers` table; fires `trigger.deep_analysis`. |
+| 3.6 | Weekly synthesis runner (uses `synthesize.weekly`) | 周度综合 | `todo` | Saturday cron; `meta.feed_prompt` chained for handoff prompt. |
+| 3.7 | Evaluation harness (gold-label briefs, prompt-regression tests) | 评估框架 | `todo` | Snapshot tests on canned items per prompt version. |
 
 ---
 
@@ -124,6 +127,31 @@ Every PR description must tick these boxes before merge:
 
 A `.github/pull_request_template.md` will be added in Phase 2 so the
 checklist auto-populates.
+
+### Auto-commit helper / 自动提交助手
+
+The assistant cannot run `git commit` from its sandbox (FUSE mount blocks
+`unlink`, which breaks `.git/index.lock`). To minimize the friction of
+"remember the multi-line `git add` + commit message", each turn the
+assistant **regenerates** `scripts/commit-pending.sh`. This script is
+gitignored — it never enters the repo, just provides a one-command
+shortcut on Lindy's Mac.
+
+助手不能从沙箱跑 `git commit` (FUSE 挂载禁止 `unlink`,会卡住 `.git/index.lock`)。
+为减少"记住多行 git add + commit message"的负担,助手每次 turn 重写
+`scripts/commit-pending.sh`。该脚本被 .gitignore,不进 repo,只在你 Mac 上当
+单条命令的快捷方式。
+
+```bash
+# Whenever you want to commit the assistant's pending work:
+bash scripts/commit-pending.sh
+```
+
+The script:
+- Always reflects the current turn's pending change-set + commit message
+- Is regenerated (and overwrites) on every turn — leftover state is fine
+- Runs `git add` + `git commit` + `git push` in sequence
+- Doesn't run `pytest` — re-run that yourself if you want extra confidence
 
 ### Session rhythm / 会话节奏
 
