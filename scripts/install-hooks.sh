@@ -72,6 +72,7 @@ fi
 diff_content="$(git diff --cached -U0 --no-color 2>/dev/null || true)"
 
 # Keep pattern list below compact and labeled. Each entry: "LABEL|REGEX".
+# Added FRED + Finnhub patterns post-incident (ADR-0013).
 patterns=(
   "Anthropic API key|sk-ant-[A-Za-z0-9_-]{20,}"
   "OpenAI API key|sk-(proj-|live-)?[A-Za-z0-9_-]{30,}"
@@ -81,6 +82,16 @@ patterns=(
   "Google API key|AIza[0-9A-Za-z_-]{30,}"
   "PEM private key block|-----BEGIN [A-Z ]*PRIVATE KEY-----"
   "Generic bearer token|bearer[[:space:]]+[A-Za-z0-9._-]{20,}"
+  # FRED's API URL embeds the key as ?api_key=<32-hex>. Catches accidental
+  # commits of constructed FRED URLs with real keys baked in.
+  "FRED API key in URL|[?&]api_key=[a-f0-9]{32}"
+  # Finnhub keys are 20-40 lowercase alphanumeric. Match only when the
+  # word 'finnhub' appears nearby (case-insensitive) to avoid matching
+  # arbitrary hashes in the codebase. Catches lines like:
+  #   FINNHUB_TOKEN = "d7..."   /   finnhub_api_key: 'd7...'
+  "Finnhub-context token|[Ff][Ii][Nn][Nn][Hh][Uu][Bb][_a-zA-Z]*[[:space:]]*[=:][[:space:]]*[\"']?[a-z0-9]{20,}"
+  # Defense-in-depth for the X-Finnhub-Token header pattern.
+  "Finnhub header token|X-Finnhub-Token[\"'[:space:]]*[=:,][\"'[:space:]]*[a-z0-9]{20,}"
 )
 
 # Only look at added lines (those starting with '+'), skip diff headers.
