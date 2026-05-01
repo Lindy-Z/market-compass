@@ -10,6 +10,13 @@ version numbers follow [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added / 新增
+- Phase 2 `2.14` + `2.15` — `.env` auto-loader + end-to-end ingest runner:
+  - `src/util/env.py` — minimal `load_dotenv(path, *, override=False, quiet=True)` (~70 lines, no extra deps). Handles `KEY=value`, double/single-quoted values (`SEC_EDGAR_USER_AGENT="market-compass/0.1 (contact: x@y.com)"` works without escaping), unquoted values with shell-special chars (parens), `export KEY=` prefix, comment lines, blank lines. Returns dict of vars actually set; respects existing `os.environ` unless `override=True`. Missing file is silent.
+  - `tests/test_env.py` — 15 tests: simple assignment, quoted (single + double), unquoted-with-parens (the realistic SEC_EDGAR_USER_AGENT case), `export` prefix, whitespace tolerance, comment + blank lines, multiple vars, override semantics (default no, opt-in yes), missing-file silent vs. warn, malformed-line skip, realistic `.env` shape end-to-end.
+  - `scripts/run_ingest.py` (new) — **the missing piece between fetch and triage**. Calls `rss.fetch_one` / `edgar.fetch_all` / `finnhub.fetch_all` / `fred.fetch_all`, runs items through `processing.dedup.filter_new`, INSERTs into `items` (FRED writes to `observations`). Per-source skip with friendly message when env keys absent; never crashes on missing keys. CLI flags: `--no-{rss,edgar,finnhub,fred}`, `--db-path`, `--verbose`. Final summary block with item / triaged / observation counts.
+  - `scripts/{smoke_test_sources,run_triage}.py` — patched to `load_dotenv()` at startup. Resolves the user-reported "FRED_API_KEY: NOT SET despite filling .env" surprise.
+  端到端抓取入库 + .env 自动加载;15 个测试通过, 累计 236/236。
+
 - Phase 3 `3.2` — classifier + triage runner:
   - `src/processing/triage.py` — `triage_one(client, item, *, body_excerpt_chars=500)` runs the `classify.triage` prompt and validates output (track in enum, importance int 0-100, deal_size numeric or null). `apply_triage(conn, result)` writes `track` / `importance` to dedicated columns and merges `deal_size_usd_billions` / `triage_reason` / `track_confidence` into `items.meta` JSON, **preserving ingestion-set keys** (`feed_url`, `finnhub_id`, etc.). `run_pending_triage()` selects `WHERE track IS NULL` ORDER BY `pub_ts ASC` (oldest first to drain backlog deterministically), supports `limit=N` and `dry_run=True` (no LLM call, no DB write), isolates per-item failures so one bad LLM response doesn't kill the run, propagates `BudgetExceededError` cleanly.
   - `scripts/run_triage.py` — CLI wrapper. Flags: `--limit N`, `--dry-run`, `--db-path`, `--verbose`, `--soft-cap-usd`, `--hard-cap-usd`. Tick-mark progress by default; `-v` prints per-item track + importance + cost. Final summary block with by-track tally + cost-meter status.
@@ -95,6 +102,8 @@ version numbers follow [Semantic Versioning](https://semver.org/).
   `.env.example` 强模型默认值切换,注释指向 ADR-0010。
 
 ### Security / 安全
+- **Pre-commit hook structural improvement**: the high-entropy heuristic now requires a leading quote on the RHS (`api_key = "..."` form) so it stops false-positive-firing on Python code that reads from env vars or config dicts (`api_key = os.environ.get(...)`, `token = config["..."]`, `password = input(...)`). Belt-and-suspenders: `os.environ`, `os.getenv`, `getenv(` added to the exclusion list. Self-tested: 8 should-not-fire cases (incl. the exact lines that blocked Commit N's first attempt) + 2 should-fire cases — all green.
+  Hook 启发式改为要求 RHS 以引号开头,避免把"读 env 的代码"误判为硬编码密钥;真实硬编码 key 几乎都在引号内,而 .env 文件已被文件名规则拦下。
 - **Post-incident hardening (ADR-0013)**: three live API keys (Anthropic, FRED, Finnhub) were pasted into chat during 3.1 setup. All three rotated within minutes; Anthropic billing confirmed clean. Pre-commit hook upgraded with three new patterns:
     1. `FRED API key in URL` — `[?&]api_key=[a-f0-9]{32}` catches the FRED URL form.
     2. `Finnhub-context token` — requires literal "finnhub" near a 20+-char lowercase value, avoiding false positives on the project's own SHA-256 content hashes.

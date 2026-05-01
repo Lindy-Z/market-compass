@@ -42,6 +42,8 @@ Status legend / 状态图例: `todo` | `in-progress` | `done` | `blocked`
 | 2.11 | Delivery: Composite (primary + fallback + retry) | 复合推送器 (主备 + 重试) | `todo` | Abstraction lives in `src/delivery/notifier.py`. |
 | 2.12 | GitHub Actions cron: daily 07:00 local | GitHub Actions 每日定时 | `todo` | UTC offset handled in job script. |
 | 2.13 | Dry-run mode + local smoke test | Dry-run 与本地冒烟测试 | `todo` | `DRY_RUN=true` env var. |
+| 2.14 | End-to-end ingest runner (RSS+EDGAR+Finnhub+FRED → items / observations) | 端到端抓取入库 | `done` | `scripts/run_ingest.py` — fetches, deduplicates via `processing.dedup.filter_new`, INSERTs into `items` (and FRED → `observations`). `--no-*` per-source toggles. Auto-loads `.env` via `src/util/env.py`. |
+| 2.15 | `.env` auto-loader for scripts | `.env` 自动加载 | `done` | `src/util/env.py` (~70 lines, no extra deps): handles quoted values, parens, `export` prefix, comment lines, override flag, missing-file silent. 15 tests. Wired into `scripts/{run_ingest,run_triage,smoke_test_sources}.py`. |
 
 ### Phase 3 — Reasoning engine / 第三阶段 — 推理引擎
 

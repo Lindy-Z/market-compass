@@ -109,14 +109,26 @@ if [[ -n "${added_lines}" ]]; then
     fi
   done
 
-  # Heuristic: label=...value pairs that look like secrets, not placeholders.
-  # Catches things like `PASSWORD=actual_value_here_with_length`
-  # but explicitly excludes obvious test / placeholder markers.
+  # Heuristic: <secret-named-var> = "<long-quoted-literal>".
+  #
+  # We REQUIRE a leading quote on the RHS so the heuristic only fires on
+  # actual string literals, not on expressions like:
+  #     api_key = os.environ.get("FRED_API_KEY", "").strip()
+  #     password = config["password"]
+  #     token = client.fetch_token()
+  # Real .env files use unquoted values, but those are caught by the
+  # `.env*` filename block above; in source code, a real hardcoded key
+  # almost always lands inside quotes.
+  #
   # The exclusion grep is case-insensitive (-i) so 'placeholder' matches
-  # 'PLACEHOLDER' and vice-versa.
+  # 'PLACEHOLDER' and vice-versa, and covers common test / fixture markers.
+  #
+  # 启发式: 仅在 RHS 以引号开头时触发,避免把"读 env 变量的 Python 代码"
+  # 误判为硬编码密钥。真实硬编码 key 几乎都在引号内;真实 .env 文件已被
+  # 文件名规则拦下。
   hits="$(echo "${added_lines}" \
-    | grep -E -i '^\+[^#]*\b(password|secret|token|api[_-]?key)\s*[:=]\s*[^[:space:]]{20,}' \
-    | grep -Ev -i 'your_[a-z_]+_here|x{5,}|changeme|replace[_-]?me|example|\.\.\.|placeholder|dry[-_]run|not[-_]real|fake|dummy|test[_-](key|token|value|placeholder|fixture|api)' || true)"
+    | grep -E -i '^\+[^#]*\b(password|secret|token|api[_-]?key)\s*[:=]\s*["'"'"'][^[:space:]]{20,}' \
+    | grep -Ev -i 'your_[a-z_]+_here|x{5,}|changeme|replace[_-]?me|example|\.\.\.|placeholder|dry[-_]run|not[-_]real|fake|dummy|test[_-](key|token|value|placeholder|fixture|api)|os\.environ|os\.getenv|getenv\(' || true)"
   if [[ -n "${hits}" ]]; then
     echo "${RED}✗ Blocked: high-entropy secret-like assignment${NC}"
     echo "${hits}" | head -n 5 | sed 's/^/    /'

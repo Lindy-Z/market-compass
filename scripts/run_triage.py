@@ -32,6 +32,11 @@ _SRC = _HERE.parent / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
+from util.env import load_dotenv  # noqa: E402
+
+# Load .env from project root before reading os.environ.
+load_dotenv(_HERE.parent / ".env")
+
 from processing.triage import run_pending_triage, TriageResult  # noqa: E402
 from reasoning.llm_client import (  # noqa: E402
     BudgetExceededError,
