@@ -9,6 +9,20 @@ version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed / 变更
+- **`classify.triage` prompt v0.1.0 → v0.2.0** based on first 385-item run analysis. Two systematic biases observed in v0.1.0:
+    1. **`na_fx` was under-fired** (only 8 / 385 items). FX-print headlines like "Japan launches FX intervention, briefly pushing yen to 155 from 160" were sent to `macro` because the model weighted the cause over the print.
+    2. **Importance anchored at 75** — 14 of 15 top items clustered exactly at 75; nothing crossed 80, nothing reached 90+ (which would have been trigger-eligible).
+  v0.2.0 fixes:
+    - **Tie-breakers expanded** with FX-print, yield-move, BoJ-intervention examples; new framing rule "THE PRINT IN THE HEADLINE WINS over the cause".
+    - **Importance recalibrated** — band order reversed (90-100 listed first), full-range anchor "USE THE FULL 0-100 RANGE — DO NOT ANCHOR AT 75" placed up-front, concrete examples per band (deal $1-5B → 80-89, scheduled CB → 70-79, etc.).
+    - System message length: 2989 chars (was ~1700). Still well under any token concern.
+  Mirrored in `docs/PROMPTS.md` with a "What changed in v0.2.0" section and updated tie-breaker / importance-band tables.
+  `tests/test_prompts.py` — 2 new content tests verify the FX tie-breakers and the calibration anchor are present.
+  `scripts/run_triage.py` — added `--reset` flag that clears `track` + `importance` for already-triaged items, enabling prompt-version A/B re-triages.
+  v0.1.0 真实数据反馈后升级到 v0.2.0:加了 FX 价位/收益率移动 tie-breaker,把"用满 0-100 区间"放最前,每档加具体例子。`run_triage.py --reset` 用于重跑同一批 item 做 A/B。
+- **Dropped `GOLDAMGBD228NLBM` from `FRED_SERIES`** — FRED returns HTTP 400 since LBMA Gold PM fixing licensing changed. No clean FRED replacement; gold direction now comes from news mentions / Finnhub. Documented in `fred.py` for future re-add.
+
 ### Added / 新增
 - Phase 2 `2.14` + `2.15` — `.env` auto-loader + end-to-end ingest runner:
   - `src/util/env.py` — minimal `load_dotenv(path, *, override=False, quiet=True)` (~70 lines, no extra deps). Handles `KEY=value`, double/single-quoted values (`SEC_EDGAR_USER_AGENT="market-compass/0.1 (contact: x@y.com)"` works without escaping), unquoted values with shell-special chars (parens), `export KEY=` prefix, comment lines, blank lines. Returns dict of vars actually set; respects existing `os.environ` unless `override=True`. Missing file is silent.
@@ -102,6 +116,19 @@ version numbers follow [Semantic Versioning](https://semver.org/).
   `.env.example` 强模型默认值切换,注释指向 ADR-0010。
 
 ### Security / 安全
+- **Pre-commit hook: docs/ + `*.md` whitelist for Layer 2 heuristic** — the previous attempt at the context-aware redesign whitelisted only test files. But documentation files are categorically the same: they legitimately describe key shapes (this very ADR-0014 documents the patterns the hook catches, and that documentation kept tripping the hook). Layer 2 now also skips `docs/`, `**/docs/`, and any file with extension `.md`, `.markdown`, `.rst`, `.txt`. Layer 1 strict patterns (sk-ant-, AKIA, etc.) still apply to docs — verified end-to-end: a real `sk-ant-...` shape pasted into a markdown file still blocks. The actual ADR-0014 content that triggered the failure is now confirmed clean against the real hook in a fresh git repo.
+  Layer 2 启发式现在也跳过 docs/ 与 .md/.markdown/.rst/.txt 扩展名;Layer 1 仍对所有文件生效 (真实 sk-ant- 粘到 markdown 里依然拦截)。在干净仓库验证了真实 ADR-0014 内容能直接通过。
+- **Pre-commit hook bash-3.2 portability + ADR-0014 placeholder examples** — the first attempt at the context-aware redesign used `mapfile` (bash 4+) which broke on macOS's default bash 3.2. Replaced with a portable while-read loop + explicit empty-array declaration + length-gated expansion (works on bash 3.2 through 5+). Separately, ADR-0014's e2e-test table contained literal `sk-ant-...` and `AKIA1234...` strings as documentation; Layer 1 correctly fired on those. Rewrote the table with angle-bracket placeholders (`sk-ant-<25-char tail>`, `AKIA<16-uppercase>`) so the ADR doesn't trigger the patterns it documents. Real test fixtures in `tests/` still use the literal forms (and Layer 1 still catches them there).
+  Re-tested 11/11 e2e cases including a markdown doc with safe placeholders (allow) and a markdown doc with literal key shape (block). bash 3.2 portability verified by re-installing the hook and inspecting non-comment lines for bash-4-only constructs.
+  hook 改 bash 3.2 兼容; ADR-0014 表格里的真实 sk-ant- / AKIA 例子换成尖括号占位符,避免 ADR 自己撞规则。
+- **Pre-commit hook: context-aware detection (ADR-0014)** — after a third false-positive round on a legitimate test fixture (`tests/test_fred.py` with `API_KEY = "test_fred_key_xyz123"`), restructured the hook from "flat regex over the whole diff" to **three layers**:
+  1. **Strict patterns** (Anthropic / OpenAI / AWS / Telegram / Google / FRED-URL / Finnhub / PEM / Bearer) apply to ALL files including `tests/`. A real-key shape is too dangerous to bypass anywhere.
+  2. **High-entropy heuristic** applies ONLY to non-test files. Test fixtures legitimately use fixture-shaped strings; the strict patterns still catch real key shapes inside tests.
+  3. **Inline `# noqa: secret` pragma** allows per-line override for the rare legitimate non-test fixture.
+  Exclusion list broadened: `test_<word>_(key|token|value|...)` (catches `test_fred_key_xyz123`), plus `fixture`, `mock`, `stub` standalone.
+  End-to-end tested against a fresh git repo with the real hook, 10/10 cases green (including the exact failing line + sk-ant- shape in test files still blocking + the pragma override + the env-read false-positive from the previous round).
+  Hook now treats false positives as a design failure to fix (ADR-0014), not a regex to extend. Architecture documented so future iterations don't roll it back.
+  钩子结构改造: 三层 (严格模式 / 非测试文件启发式 / 行内 pragma) + 加宽测试夹具排除。10/10 e2e 测试通过。
 - **Pre-commit hook structural improvement**: the high-entropy heuristic now requires a leading quote on the RHS (`api_key = "..."` form) so it stops false-positive-firing on Python code that reads from env vars or config dicts (`api_key = os.environ.get(...)`, `token = config["..."]`, `password = input(...)`). Belt-and-suspenders: `os.environ`, `os.getenv`, `getenv(` added to the exclusion list. Self-tested: 8 should-not-fire cases (incl. the exact lines that blocked Commit N's first attempt) + 2 should-fire cases — all green.
   Hook 启发式改为要求 RHS 以引号开头,避免把"读 env 的代码"误判为硬编码密钥;真实硬编码 key 几乎都在引号内,而 .env 文件已被文件名规则拦下。
 - **Post-incident hardening (ADR-0013)**: three live API keys (Anthropic, FRED, Finnhub) were pasted into chat during 3.1 setup. All three rotated within minutes; Anthropic billing confirmed clean. Pre-commit hook upgraded with three new patterns:

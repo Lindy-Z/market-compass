@@ -68,11 +68,72 @@ if [[ -n "${staged_keys}" ]]; then
 fi
 
 # --- 3) Pattern scan over the staged diff ----------------------------------
-# Use -U0 so only added/changed lines are considered.
-diff_content="$(git diff --cached -U0 --no-color 2>/dev/null || true)"
+#
+# Architecture:
+#   STRICT PATTERNS (Anthropic / OpenAI / AWS / Telegram / Google / FRED-URL
+#   / Finnhub / PEM / Bearer / etc.) apply to ALL files including tests.
+#   Real keys with these recognizable shapes are too dangerous to bypass
+#   anywhere — even a "test" file with a real `sk-ant-...` key is a leak.
+#
+#   HIGH-ENTROPY HEURISTIC (`<secret-named-var> = "<long-literal>"`) applies
+#   only to NON-TEST files. Test fixtures legitimately contain quoted
+#   strings shaped like keys (e.g. `API_KEY = "test_fred_key_xyz123"`);
+#   blocking them is friction without protection benefit. The strict
+#   patterns still apply, so a real key shape would still be caught.
+#
+#   PRAGMA OVERRIDE: any line ending with `# noqa: secret` is skipped by
+#   the heuristic. Use sparingly for the rare legitimate non-test fixture
+#   that the exclusion list doesn't catch.
+#
+# 设计:
+#   严格模式 (sk-ant-, AKIA, ...) 对所有文件生效,包括 tests/。
+#   高熵启发式 (<secret>="..." 形式) 仅对非测试文件生效;测试夹具里的
+#   "假 key" 是合法的, 拦它们只增加摩擦不增加安全。
+#   行尾加 `# noqa: secret` 注释可逐行跳过启发式 (谨慎使用)。
 
-# Keep pattern list below compact and labeled. Each entry: "LABEL|REGEX".
-# Added FRED + Finnhub patterns post-incident (ADR-0013).
+# Get list of staged files, partition by category. The Layer 2 heuristic
+# is skipped for two file classes:
+#   - test fixtures (tests/, test/, **/tests/, **/spec/)
+#   - documentation (docs/, **/docs/, *.md, *.markdown, *.rst, *.txt)
+# The Layer 1 strict patterns still apply to ALL files, so a real
+# sk-ant-... key accidentally pasted into a README still gets blocked.
+# Code files (.py / .js / .sh / etc.) outside the above are scanned
+# normally.
+staged_all="$(git diff --cached --name-only --diff-filter=AMR 2>/dev/null || true)"
+staged_non_test="$(echo "${staged_all}" \
+  | grep -vE '(^|/)(tests?|spec|docs)(/|$)' \
+  | grep -vE '\.(md|markdown|rst|txt)$' \
+  || true)"
+
+# Full diff (for strict patterns — applies to all files)
+diff_all="$(git diff --cached -U0 --no-color 2>/dev/null || true)"
+all_added="$(echo "${diff_all}" | grep -E '^\+' | grep -Ev '^\+\+\+' || true)"
+
+# Diff scoped to non-test files only (for the fuzzy heuristic).
+# NB: macOS ships bash 3.2 by default, where 'mapfile' is unavailable
+# (it's bash 4+). We use a portable while-read-loop and an explicit
+# empty-array declaration so 'set -u' is happy when the array is empty.
+non_test_added=""
+non_test_files_arr=()
+if [[ -n "${staged_non_test}" ]]; then
+  while IFS= read -r line; do
+    if [[ -n "$line" ]]; then
+      non_test_files_arr+=("$line")
+    fi
+  done <<< "${staged_non_test}"
+fi
+if [[ ${#non_test_files_arr[@]} -gt 0 ]]; then
+  diff_nt="$(git diff --cached -U0 --no-color -- "${non_test_files_arr[@]}" 2>/dev/null || true)"
+  non_test_added="$(echo "${diff_nt}" | grep -E '^\+' | grep -Ev '^\+\+\+' || true)"
+fi
+
+# Strip lines marked with the explicit override pragma.
+all_added="$(echo "${all_added}" | grep -Ev '#[[:space:]]*noqa:[[:space:]]*secret' || true)"
+non_test_added="$(echo "${non_test_added}" | grep -Ev '#[[:space:]]*noqa:[[:space:]]*secret' || true)"
+
+# --- Strict patterns (apply to ALL files) ---
+# Each entry: "LABEL|REGEX". Added FRED + Finnhub patterns post-incident
+# (ADR-0013).
 patterns=(
   "Anthropic API key|sk-ant-[A-Za-z0-9_-]{20,}"
   "OpenAI API key|sk-(proj-|live-)?[A-Za-z0-9_-]{30,}"
@@ -82,58 +143,46 @@ patterns=(
   "Google API key|AIza[0-9A-Za-z_-]{30,}"
   "PEM private key block|-----BEGIN [A-Z ]*PRIVATE KEY-----"
   "Generic bearer token|bearer[[:space:]]+[A-Za-z0-9._-]{20,}"
-  # FRED's API URL embeds the key as ?api_key=<32-hex>. Catches accidental
-  # commits of constructed FRED URLs with real keys baked in.
   "FRED API key in URL|[?&]api_key=[a-f0-9]{32}"
-  # Finnhub keys are 20-40 lowercase alphanumeric. Match only when the
-  # word 'finnhub' appears nearby (case-insensitive) to avoid matching
-  # arbitrary hashes in the codebase. Catches lines like:
-  #   FINNHUB_TOKEN = "d7..."   /   finnhub_api_key: 'd7...'
   "Finnhub-context token|[Ff][Ii][Nn][Nn][Hh][Uu][Bb][_a-zA-Z]*[[:space:]]*[=:][[:space:]]*[\"']?[a-z0-9]{20,}"
-  # Defense-in-depth for the X-Finnhub-Token header pattern.
   "Finnhub header token|X-Finnhub-Token[\"'[:space:]]*[=:,][\"'[:space:]]*[a-z0-9]{20,}"
 )
 
-# Only look at added lines (those starting with '+'), skip diff headers.
-added_lines="$(echo "${diff_content}" | grep -E '^\+' | grep -Ev '^\+\+\+' || true)"
-
-if [[ -n "${added_lines}" ]]; then
+if [[ -n "${all_added}" ]]; then
   for entry in "${patterns[@]}"; do
     label="${entry%%|*}"
     regex="${entry#*|}"
-    hits="$(echo "${added_lines}" | grep -En -- "${regex}" || true)"
+    hits="$(echo "${all_added}" | grep -En -- "${regex}" || true)"
     if [[ -n "${hits}" ]]; then
       echo "${RED}✗ Blocked: pattern matched [${label}]${NC}"
       echo "${hits}" | head -n 5 | sed 's/^/    /'
       fail=1
     fi
   done
+fi
 
-  # Heuristic: <secret-named-var> = "<long-quoted-literal>".
-  #
-  # We REQUIRE a leading quote on the RHS so the heuristic only fires on
-  # actual string literals, not on expressions like:
-  #     api_key = os.environ.get("FRED_API_KEY", "").strip()
-  #     password = config["password"]
-  #     token = client.fetch_token()
-  # Real .env files use unquoted values, but those are caught by the
-  # `.env*` filename block above; in source code, a real hardcoded key
-  # almost always lands inside quotes.
-  #
-  # The exclusion grep is case-insensitive (-i) so 'placeholder' matches
-  # 'PLACEHOLDER' and vice-versa, and covers common test / fixture markers.
-  #
-  # 启发式: 仅在 RHS 以引号开头时触发,避免把"读 env 变量的 Python 代码"
-  # 误判为硬编码密钥。真实硬编码 key 几乎都在引号内;真实 .env 文件已被
-  # 文件名规则拦下。
-  hits="$(echo "${added_lines}" \
+# --- High-entropy heuristic (NON-TEST FILES ONLY) ---
+# Fires when a line looks like `<secret-named-var> = "<20+-char-literal>"`.
+# Requires a leading quote on the RHS so it doesn't match expressions like
+# `api_key = os.environ.get(...)`.
+#
+# Exclusion list (case-insensitive) covers common placeholder / test
+# fixture markers. The `test[_-][a-z0-9_-]*(key|...)` pattern accepts
+# intermediate words, so `test_fred_key`, `test_anthropic_token`, etc.
+# all match. `fixture` / `mock` / `stub` are also recognized as
+# fixture markers when they appear anywhere in the line.
+if [[ -n "${non_test_added}" ]]; then
+  hits="$(echo "${non_test_added}" \
     | grep -E -i '^\+[^#]*\b(password|secret|token|api[_-]?key)\s*[:=]\s*["'"'"'][^[:space:]]{20,}' \
-    | grep -Ev -i 'your_[a-z_]+_here|x{5,}|changeme|replace[_-]?me|example|\.\.\.|placeholder|dry[-_]run|not[-_]real|fake|dummy|test[_-](key|token|value|placeholder|fixture|api)|os\.environ|os\.getenv|getenv\(' || true)"
+    | grep -Ev -i 'your_[a-z_]+_here|x{5,}|changeme|replace[_-]?me|example|\.\.\.|placeholder|dry[-_]run|not[-_]real|fake|dummy|fixture|\bmock\b|\bstub\b|test[_-][a-z0-9_-]*(key|token|value|placeholder|fixture|api|password|secret)|os\.environ|os\.getenv|getenv\(' || true)"
   if [[ -n "${hits}" ]]; then
     echo "${RED}✗ Blocked: high-entropy secret-like assignment${NC}"
     echo "${hits}" | head -n 5 | sed 's/^/    /'
-    echo "  ${YEL}Looks like a real credential. If it is not, rename the variable or shorten the value.${NC}"
-    echo "  ${YEL}若为误报,请改名或缩短取值后再提交。${NC}"
+    echo "  ${YEL}Looks like a real credential. Three escape hatches:${NC}"
+    echo "  ${YEL}  1. Move to tests/ (heuristic skipped there).${NC}"
+    echo "  ${YEL}  2. Add ' # noqa: secret' to the line.${NC}"
+    echo "  ${YEL}  3. Rename / shorten so the value reads as a fixture.${NC}"
+    echo "  ${YEL}若为误报,可移到 tests/、加 # noqa: secret 注释,或改名 / 缩短值。${NC}"
     fail=1
   fi
 fi

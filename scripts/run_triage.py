@@ -107,6 +107,14 @@ def main() -> int:
         "--hard-cap-usd", type=float, default=20.0,
         help="Cost-meter hard cap. Default $20/mo per project brief.",
     )
+    parser.add_argument(
+        "--reset", action="store_true",
+        help=(
+            "Clear track + importance from ALL items before triage. "
+            "Forces re-classification — useful when iterating the prompt. "
+            "Cost: 1× full-corpus triage. Use deliberately."
+        ),
+    )
     args = parser.parse_args()
 
     db_path = (
@@ -144,6 +152,19 @@ def main() -> int:
 
     with get_connection(db_path) as conn:
         init_db(conn)
+
+        # --reset: clear prior triage outputs on already-classified items.
+        # Use deliberately — forces re-classification on every item that
+        # had been triaged. Useful for prompt-version A/B testing.
+        if args.reset:
+            cur = conn.execute(
+                "UPDATE items SET track = NULL, importance = NULL "
+                "WHERE track IS NOT NULL"
+            )
+            print(
+                f"  {YELLOW}--reset:{NC} cleared track + importance for "
+                f"{cur.rowcount} already-triaged items"
+            )
 
         try:
             summary = run_pending_triage(

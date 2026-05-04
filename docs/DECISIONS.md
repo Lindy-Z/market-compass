@@ -622,6 +622,135 @@ Finnhub 的 header 模式; 三者均做了误报抑制 (例如要求"finnhub"上
 
 ---
 
+## ADR-0014 — Pre-commit hook: context-aware secret detection
+
+- **Date**: 2026-04-23
+- **Status**: accepted
+- **Deciders**: Lindy (after the third false-positive round)
+- **Refines**: ADR-0013 (secrets discipline)
+
+### Context / 背景
+The secret-scanning pre-commit hook produced **three rounds of
+false positives** in rapid succession during Phase 3.x development:
+
+| Round | Trigger | Symptom |
+|---|---|---|
+| Commit M | Anthropic-shape fixture in test file (`API_KEY` assigned a `sk-ant-<25-char value>` form) | test fixture string was 20+ chars |
+| Commit N | `api_key = os.environ.get(<env-var-name>, ...)` | code expression on RHS, not a literal |
+| Commit O | `API_KEY = "test_<word>_key_<short hex>"` (in `tests/test_fred.py`) | test fixture with intermediate words between `test_` and `_key` |
+
+Each round was patched with a narrower regex tweak:
+- Round 1: shorten test fixtures + add `placeholder` / `dry-run` /
+  `not-real` / `fake` / `dummy` to the exclusion list.
+- Round 2: require leading quote on RHS so `os.environ.get(...)` etc.
+  doesn't match.
+- Round 3: ?
+
+Continuing the regex-tweak pattern is whack-a-mole. The underlying
+problem is that the heuristic has no **context**: it can't tell a test
+fixture from a real key by looking at the line alone.
+
+三轮误报本质同源: 启发式只看行文本,不看上下文 (文件路径、调用形式、显式 pragma)。
+继续靠"加正则排除项"是治标。
+
+### Decision / 决策
+The pre-commit hook now uses **layered, context-aware detection**:
+
+**Layer 1 — Strict patterns (every file, no exceptions)**
+
+Specific known-shape regexes (Anthropic `sk-ant-`, OpenAI `sk-`, AWS
+`AKIA`, Telegram bot tokens, Google `AIza`, PEM blocks, FRED URL,
+Finnhub-context, X-Finnhub-Token header). These represent unambiguous
+real-key shapes. Even a "test" file with `KEY = "sk-ant-real_looking..."`
+gets blocked — the cost of cleaning a leaked Anthropic key dominates
+the friction.
+
+**Layer 2 — High-entropy heuristic (CODE FILES only)**
+
+Pattern: `<secret-named-var> = "<20+-char-quoted-literal>"`. Skipped for
+two whole file classes:
+
+1. **Test fixtures**: `tests/`, `test/`, `**/tests/`, `**/spec/`. Tests
+   legitimately use fixture-shaped strings.
+2. **Documentation**: `docs/`, `**/docs/`, and any file with extension
+   `.md`, `.markdown`, `.rst`, `.txt`. Docs legitimately describe key
+   shapes (this very ADR contains examples of what the hook catches).
+
+Layer 1 still applies to docs, so a real `sk-ant-...` accidentally
+pasted into a README still gets caught.
+
+The heuristic also requires a **leading quote** on the RHS so it
+ignores Python expressions like `api_key = os.environ.get(...)`,
+`token = config["..."]`, `password = input(...)`.
+
+**Layer 3 — Inline `# noqa: secret` pragma (any file)**
+
+Lines ending with `# noqa: secret` (case-insensitive whitespace) are
+skipped by the heuristic. Use sparingly for the rare legitimate
+non-test fixture that the exclusion list doesn't catch; the explicit
+opt-in shows up in code review and signals intent.
+
+**Exclusion list, broader (still applies in non-test files):**
+
+`your_..._here`, `xxxxx`, `changeme`, `replace_me`, `example`, `...`,
+`placeholder`, `dry-run`, `not-real`, `fake`, `dummy`, `fixture`,
+`mock`, `stub`, `test_<word>_(key|token|value|placeholder|fixture|api|password|secret)`,
+`os.environ`, `os.getenv`, `getenv(`. All case-insensitive.
+
+三层防御:
+  1. 严格模式 — 已知特征 (sk-ant-, AKIA, 等),所有文件无差别拦截。
+  2. 高熵启发式 — 仅代码文件 (排除 tests/、docs/、*.md 等文档);要求 RHS 以引号开头,避免误判表达式。
+  3. 行内 pragma `# noqa: secret` — 显式逐行跳过,适用于罕见合理情况。
+
+### End-to-end tested / 端到端测试 (10/10 green)
+
+Verified against a fresh git repo with the actual hook in
+`.git/hooks/pre-commit`:
+
+> **Note on placeholders below**: descriptions use angle-bracket forms
+> like `sk-ant-<...>` and `AKIA<...>` so this ADR itself doesn't trigger
+> the Layer 1 patterns it's documenting. Real tests use the literal
+> shapes (which then correctly fire Layer 1).
+
+| Case | Expected | Actual |
+|---|---|---|
+| `tests/test_fred.py` with `API_KEY = "test_<word>_key_<chars>"` | allow | ✓ allow |
+| `scripts/run_triage.py` with `api_key = os.environ.get(<envvar>, ...)` | allow | ✓ allow |
+| `src/real.py` with `api_key = "<32-hex production-shaped value>"` | block | ✓ block |
+| `src/real.py` with key + `# noqa: secret` pragma | allow | ✓ allow |
+| `tests/test_x.py` with `KEY = "sk-ant-<25-char tail>"` | block (Layer 1 still fires in test files) | ✓ block |
+| `scripts/run_triage.py` with `api_key = "dry-run"` | allow | ✓ allow |
+| `src/api.py` with `api_key = "test_<word>_key_<chars>"` | allow (broader exclusion catches it in non-test too) | ✓ allow |
+| `tests/test_aws.py` with `config = {"api_key": "AKIA<16-uppercase>"}` | block (Layer 1) | ✓ block |
+| `src/auth.py` with `token = "Bearer_<long hex>"` | block | ✓ block |
+| EXACT line that just blocked Commit O retry | allow | ✓ allow |
+
+### Consequences / 后果
+- **The structural change is recorded here** so future maintainers
+  don't roll it back to the simpler "regex over flat diff" form when
+  they encounter an apparent false-positive class. The answer is
+  always to tune within these three layers, not to abandon them.
+- **Test fixtures live in `tests/`** by convention. Putting a fixture
+  outside `tests/` triggers the heuristic — that's the right default;
+  use the pragma to override.
+- **The pragma `# noqa: secret` is part of the project's vocabulary**
+  going forward. Document in onboarding docs once we have any.
+
+### Alternatives considered / 备选
+- **Drop the high-entropy heuristic entirely** — would eliminate all
+  false positives but lose the "catch a random pasted key" protection.
+  Rejected: protection is worth keeping, just made smarter.
+- **Use `git-secrets` or `detect-secrets`** — more sophisticated
+  third-party tools. Rejected (per ADR-0006) because the custom hook
+  is auditable in one shell file and our project scale doesn't justify
+  the dependency.
+- **Move keys to a secrets manager (Vault, 1Password, etc.)** — the
+  hook becomes irrelevant. Reasonable for a team / production system;
+  overkill for a personal project (per ADR-0013). Revisit if the
+  project grows users.
+
+---
+
 <!-- Template for new ADRs / 新 ADR 模板 -->
 
 <!--
