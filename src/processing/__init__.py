@@ -5,6 +5,15 @@ from .dedup import (
     filter_new,
     is_duplicate,
 )
+from .causal_chain import (
+    DEFAULT_STRONG_THRESHOLD,
+    REQUIRED_STEPS,
+    CausalChainResult,
+    CausalChainRunSummary,
+    apply_chain,
+    chain_one,
+    run_pending_causal_chain,
+)
 from .summary import (
     DEFAULT_BODY_INPUT_CHARS,
     EXCLUDED_TRACKS_DEFAULT,
@@ -46,4 +55,12 @@ __all__ = [
     "apply_summary",
     "run_pending_summary",
     "summarize_one",
+    # causal_chain
+    "DEFAULT_STRONG_THRESHOLD",
+    "REQUIRED_STEPS",
+    "CausalChainResult",
+    "CausalChainRunSummary",
+    "apply_chain",
+    "chain_one",
+    "run_pending_causal_chain",
 ]
