@@ -9,6 +9,15 @@ version numbers follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added / 新增
+- Phase 3 `3.3` — bilingual summary runner:
+  - `src/processing/summary.py` — `summarize_one(client, item, *, body_input_chars=3000)` runs the `summarize.bilingual` prompt and validates output: `summary_en` non-empty string, `summary_zh` non-empty string with **at least one CJK character** (catches the failure mode where the model returns English in both fields), `key_numbers` list-of-strings or null. `apply_summary(conn, result)` writes `summary_en` / `summary_zh` to dedicated columns and merges `key_numbers` into `items.meta` JSON, **preserving keys set by ingestion (feed_url, finnhub_id, etc.) and by triage (deal_size_usd_billions, triage_reason, track_confidence)**. Does NOT touch `items.processed_ts` — that's reserved for the causal_chain runner (Phase 3.4) since reasoning isn't "complete" until the chain is generated.
+  - `run_pending_summary()` — selects `WHERE summary_en IS NULL AND track IS NOT NULL`, by default excludes `track='other'` (archive-only, avg importance ~15, never in brief). `--include-other` overrides. `min_importance` parameter for further filtering. Oldest-pub_ts-first to drain backlog deterministically (mirrors triage). Per-item failure isolation; propagates `BudgetExceededError`; `dry_run=True` skips both LLM call and DB write.
+  - `scripts/run_summary.py` — CLI with `--limit`, `--dry-run`, `--reset` (clears summary fields), `--include-other`, `--min-importance`, `--verbose` (per-item EN/ZH preview), `--soft-cap-usd`, `--hard-cap-usd`. Tick-mark progress by default; verbose shows the first 60 chars of each generated summary.
+  - `tests/test_summary.py` — **36 tests** via `FakeAnthropicClient`-backed real `LLMClient`: CJK detection, validation (non-dict / missing fields / empty fields / EN-only in zh-field / non-list key_numbers / non-string elements / well-formed / null key_numbers / empty list), happy path with key_numbers, body truncation, unparseable response, English-only-in-zh-field rejection, whitespace stripping, cost-recorded-on-failure, apply_summary writes columns + merges key_numbers + preserves ingestion+triage keys + handles null/corrupt meta + no-op on failure + leaves processed_ts NULL, run_pending only-classified + excludes-other-default + include-other-flag + min_importance + skips-already-summarized + oldest-first + limit + dry-run + by-track tally + per-item failure isolation + budget propagation + empty queue + progress callback.
+  - Cost projection on current corpus (~188 classified non-other items): ~$0.0009/item × 188 = ~$0.17 per full pass.
+  Phase 3.3 双语摘要执行器完成,36 个测试通过 (累计 274/274)。验证逻辑包括 summary_zh 必须包含 CJK 字符 (拦下模型在两字段都返回英文的失败模式)。
+
 ### Changed / 变更
 - **`classify.triage` prompt v0.1.0 → v0.2.0** based on first 385-item run analysis. Two systematic biases observed in v0.1.0:
     1. **`na_fx` was under-fired** (only 8 / 385 items). FX-print headlines like "Japan launches FX intervention, briefly pushing yen to 155 from 160" were sent to `macro` because the model weighted the cause over the print.
